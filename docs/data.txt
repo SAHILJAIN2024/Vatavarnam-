@@ -1,0 +1,38 @@
+https://mosdac.gov.in/
+
+https://api.imd.gov.in/public/api_reference.html
+
+https://api.imd.gov.in/public/api_reference.html#api-1
+
+https://www.incois.gov.in/site/services/osf.jsp
+
+https://incois.gov.in/site/dataholdings.jsp
+
+https://indiawris.gov.in/swagger-ui/index.html#/Data%20API%20Based%20On%20Admin%20Hierarchy/getWind
+
+https://www.data.gov.in/apis - Science and Technology
+
+backend/
+│
+├── app/
+│
+├── connectors/
+│   ├── isro/
+│   ├── imd/
+│   ├── incois/
+│   ├── wris/
+│   ├── cpcb/
+│   ├── imdaa/
+│   └── bhuvan/
+│
+├── scheduler/
+│
+├── services/
+│
+├── schemas/
+│
+├── database/
+│
+├── kafka/
+│
+└── utils/
