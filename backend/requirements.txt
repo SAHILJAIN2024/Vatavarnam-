@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy
+psycopg[binary]
+geoalchemy2
+python-dotenv
+
+pandas
+numpy
+xarray
+netCDF4
+
+cdsapi
+httpx
