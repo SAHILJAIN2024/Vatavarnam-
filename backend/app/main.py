@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 
 from app.models.dataset import Dataset
@@ -9,7 +9,9 @@ from app.api.datasets import router as datasets_router
 from app.api.observations import router as observations_router
 
 from app.routers import locations
-
+from app.routers import timeseries
+from app.routers import metrics
+from app.routers import map
 app = FastAPI(
     title="AI-Powered Digital Twin of India",
     description=(
@@ -17,6 +19,17 @@ app = FastAPI(
         "and digital twin backend."
     ),
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -37,6 +50,18 @@ app.include_router(
 
 app.include_router(
     locations.router
+)
+
+app.include_router(
+    timeseries.router
+)
+
+app.include_router(
+    metrics.router
+)
+
+app.include_router(
+    map.router
 )
 
 @app.get("/")
