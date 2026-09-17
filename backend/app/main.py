@@ -4,6 +4,7 @@ from app.database import Base, engine
 
 from app.models.dataset import Dataset
 from app.models.observation import ClimateObservation
+from app.models.rainfall import RainfallObservation
 
 from app.api.datasets import router as datasets_router
 from app.api.observations import router as observations_router
@@ -12,6 +13,8 @@ from app.routers import locations
 from app.routers import timeseries
 from app.routers import metrics
 from app.routers import map
+from app.routers.rainfall import router as rainfall_router
+
 app = FastAPI(
     title="AI-Powered Digital Twin of India",
     description=(
@@ -65,6 +68,8 @@ app.include_router(
 )
 
 app.include_router(map_router)
+
+app.include_router(rainfall_router)
 
 @app.get("/")
 def root():
