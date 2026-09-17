@@ -1,114 +1,206 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.observation import ClimateObservation
+
 
 router = APIRouter(
     prefix="/api/v1/map",
-    tags=["Map"],
+    tags=["map"],
 )
 
 
+# Variables physically stored in the database.
+STORED_VARIABLES = {
+    "temperature_2m",
+    "surface_pressure",
+    "wind_u_10m",
+    "wind_v_10m",
+    "boundary_layer_height",
+}
+
+
+SUPPORTED_VARIABLES = STORED_VARIABLES | {
+    "wind_speed",
+}
+
+
 @router.get("/grid")
-def get_climate_grid(
-    timestamp: datetime | None = Query(
-        default=None,
-        description="UTC timestamp. If omitted, latest available timestamp is used.",
+def get_map_grid(
+    variable: str = Query(
+        "temperature_2m",
+        description="Climate variable to visualize",
     ),
-    variable: str | None = Query(
-        default=None,
-        description="Optional variable to visualize.",
+    timestamp: datetime | None = Query(
+        None,
+        description="Observation timestamp",
     ),
     db: Session = Depends(get_db),
 ):
     """
-    Return climate grid observations as GeoJSON.
+    Return the climate grid as GeoJSON.
 
-    Each feature represents one ERA5 grid point.
+    Supported variables:
+        temperature_2m
+        surface_pressure
+        wind_u_10m
+        wind_v_10m
+        wind_speed
+        boundary_layer_height
     """
 
-    # ---------------------------------------------------------
-    # 1. Determine timestamp
-    # ---------------------------------------------------------
+    if variable not in SUPPORTED_VARIABLES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Unsupported climate variable",
+                "supported_variables": sorted(
+                    SUPPORTED_VARIABLES
+                ),
+            },
+        )
+
+    # --------------------------------------------------
+    # Determine timestamp
+    # --------------------------------------------------
 
     if timestamp is None:
-        timestamp_query = text(
-            """
-            SELECT MAX(timestamp)
-            FROM climate_observations
-            """
+        timestamp = db.scalar(
+            select(
+                func.max(
+                    ClimateObservation.timestamp
+                )
+            ).where(
+                ClimateObservation.dataset_id
+                == "era5_india_test"
+            )
         )
 
-        selected_timestamp = db.execute(
-            timestamp_query
-        ).scalar()
+        if timestamp is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No climate observations found.",
+            )
 
-    else:
-        selected_timestamp = timestamp
+    # --------------------------------------------------
+    # Derived wind speed
+    # --------------------------------------------------
 
-    if selected_timestamp is None:
-        raise HTTPException(
-            status_code=404,
-            detail="No climate observations available.",
-        )
+    if variable == "wind_speed":
+        observations = db.execute(
+            select(ClimateObservation)
+            .where(
+                ClimateObservation.dataset_id
+                == "era5_india_test",
+                ClimateObservation.timestamp
+                == timestamp,
+                ClimateObservation.variable.in_(
+                    [
+                        "wind_u_10m",
+                        "wind_v_10m",
+                    ]
+                ),
+            )
+            .order_by(
+                ClimateObservation.latitude.desc(),
+                ClimateObservation.longitude.asc(),
+            )
+        ).scalars().all()
 
-    # ---------------------------------------------------------
-    # 2. Retrieve grid
-    # ---------------------------------------------------------
+        grouped: dict[
+            tuple[float, float],
+            dict[str, float],
+        ] = {}
 
-    query = """
-        SELECT
-            id,
+        for observation in observations:
+            key = (
+                observation.latitude,
+                observation.longitude,
+            )
+
+            if key not in grouped:
+                grouped[key] = {}
+
+            grouped[key][
+                observation.variable
+            ] = observation.value
+
+        features = []
+
+        for (
             latitude,
             longitude,
-            variable,
-            value,
-            unit,
-            source,
-            dataset_id,
-            quality_flag,
-            spatial_resolution,
-            temporal_resolution
-        FROM climate_observations
-        WHERE timestamp = :timestamp
-    """
+        ), values in grouped.items():
 
-    params = {
-        "timestamp": selected_timestamp,
-    }
+            u = values.get("wind_u_10m")
+            v = values.get("wind_v_10m")
 
-    if variable is not None:
-        query += """
-            AND variable = :variable
-        """
+            if u is None or v is None:
+                continue
 
-        params["variable"] = variable
+            speed = (
+                u * u + v * v
+            ) ** 0.5
 
-    query += """
-        ORDER BY latitude DESC, longitude ASC
-    """
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [
+                            longitude,
+                            latitude,
+                        ],
+                    },
+                    "properties": {
+                        "dataset_id": "era5_india_test",
+                        "source": "ECMWF_CDS",
+                        "timestamp": timestamp.isoformat(),
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "variable": "wind_speed",
+                        "value": speed,
+                        "unit": "m/s",
+                    },
+                }
+            )
 
-    observations = (
-        db.execute(
-            text(query),
-            params,
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "metadata": {
+                "variable": "wind_speed",
+                "unit": "m/s",
+                "timestamp": timestamp.isoformat(),
+                "source": "ECMWF_CDS",
+                "dataset_id": "era5_india_test",
+                "derived": True,
+            },
+        }
+
+    # --------------------------------------------------
+    # Normal stored variables
+    # --------------------------------------------------
+
+    observations = db.execute(
+        select(ClimateObservation)
+        .where(
+            ClimateObservation.dataset_id
+            == "era5_india_test",
+            ClimateObservation.timestamp
+            == timestamp,
+            ClimateObservation.variable
+            == variable,
         )
-        .mappings()
-        .all()
-    )
-
-    if not observations:
-        raise HTTPException(
-            status_code=404,
-            detail="No grid observations found.",
+        .order_by(
+            ClimateObservation.latitude.desc(),
+            ClimateObservation.longitude.asc(),
         )
-
-    # ---------------------------------------------------------
-    # 3. Convert observations to GeoJSON
-    # ---------------------------------------------------------
+    ).scalars().all()
 
     features = []
 
@@ -119,48 +211,44 @@ def get_climate_grid(
                 "geometry": {
                     "type": "Point",
                     "coordinates": [
-                        observation["longitude"],
-                        observation["latitude"],
+                        observation.longitude,
+                        observation.latitude,
                     ],
                 },
                 "properties": {
-                    "id": observation["id"],
-                    "latitude": observation["latitude"],
-                    "longitude": observation["longitude"],
-                    "variable": observation["variable"],
-                    "value": observation["value"],
-                    "unit": observation["unit"],
-                    "source": observation["source"],
-                    "dataset_id": observation["dataset_id"],
-                    "quality_flag": observation["quality_flag"],
-                    "spatial_resolution": observation[
-                        "spatial_resolution"
-                    ],
-                    "temporal_resolution": observation[
-                        "temporal_resolution"
-                    ],
+                    "id": observation.id,
+                    "dataset_id": observation.dataset_id,
+                    "source": observation.source,
+                    "timestamp": observation.timestamp.isoformat(),
+                    "latitude": observation.latitude,
+                    "longitude": observation.longitude,
+                    "variable": observation.variable,
+                    "value": observation.value,
+                    "unit": observation.unit,
+                    "quality_flag": observation.quality_flag,
+                    "spatial_resolution": observation.spatial_resolution,
+                    "temporal_resolution": observation.temporal_resolution,
                 },
             }
         )
 
-    # ---------------------------------------------------------
-    # 4. Return GeoJSON FeatureCollection
-    # ---------------------------------------------------------
-
     return {
         "type": "FeatureCollection",
-        "metadata": {
-            "timestamp": selected_timestamp,
-            "variable": variable,
-            "feature_count": len(features),
-            "source": observations[0]["source"],
-            "dataset_id": observations[0]["dataset_id"],
-            "spatial_resolution": observations[0][
-                "spatial_resolution"
-            ],
-            "temporal_resolution": observations[0][
-                "temporal_resolution"
-            ],
-        },
         "features": features,
+        "metadata": {
+            "variable": variable,
+            "unit": (
+                observations[0].unit
+                if observations
+                else None
+            ),
+            "timestamp": (
+                timestamp.isoformat()
+                if timestamp
+                else None
+            ),
+            "source": "ECMWF_CDS",
+            "dataset_id": "era5_india_test",
+            "derived": False,
+        },
     }

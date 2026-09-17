@@ -7,7 +7,7 @@ from app.models.observation import ClimateObservation
 
 from app.api.datasets import router as datasets_router
 from app.api.observations import router as observations_router
-
+from app.routers.map import router as map_router
 from app.routers import locations
 from app.routers import timeseries
 from app.routers import metrics
@@ -63,6 +63,8 @@ app.include_router(
 app.include_router(
     map.router
 )
+
+app.include_router(map_router)
 
 @app.get("/")
 def root():

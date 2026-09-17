@@ -10,7 +10,8 @@ import {
   getClimateGrid,
   getClimateMetrics,
   getClimateTimeSeries,
-  type GridFeature,
+  type ClimateVariable,
+  type GridResponse,
   type MetricsResponse,
   type TimeSeriesResponse,
 } from "@/lib/api";
@@ -20,7 +21,7 @@ const ClimateMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-full items-center justify-center bg-slate-950 text-slate-400">
+      <div className="flex h-full min-h-[650px] items-center justify-center bg-slate-950 text-slate-400">
         Loading climate map...
       </div>
     ),
@@ -28,9 +29,23 @@ const ClimateMap = dynamic(
 );
 
 export default function Home() {
-  const [grid, setGrid] = useState<GridFeature[]>(
-    [],
+  /* ====================================================
+     Climate Grid
+  ==================================================== */
+
+  const [grid, setGrid] =
+    useState<GridResponse | null>(null);
+
+  const [
+    selectedVariable,
+    setSelectedVariable,
+  ] = useState<ClimateVariable>(
+    "temperature_2m",
   );
+
+  /* ====================================================
+     Location Intelligence
+  ==================================================== */
 
   const [metrics, setMetrics] =
     useState<MetricsResponse | null>(null);
@@ -38,41 +53,68 @@ export default function Home() {
   const [timeSeries, setTimeSeries] =
     useState<TimeSeriesResponse | null>(null);
 
+  /* ====================================================
+     Loading / Error States
+  ==================================================== */
+
   const [loadingGrid, setLoadingGrid] =
     useState(true);
 
   const [loadingLocation, setLoadingLocation] =
     useState(false);
 
-  const [error, setError] = useState<
-    string | null
-  >(null);
+  const [error, setError] =
+    useState<string | null>(null);
+
+  /* ====================================================
+     Load Selected Climate Variable
+  ==================================================== */
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadGrid() {
       try {
         setLoadingGrid(true);
         setError(null);
 
-        const response =
+        const result =
           await getClimateGrid(
-            "temperature_2m",
+            selectedVariable,
           );
 
-        setGrid(response.features);
+        if (!cancelled) {
+          setGrid(result);
+        }
       } catch (err) {
-        console.error(err);
-
-        setError(
-          "Unable to load climate grid. Make sure the FastAPI backend is running.",
+        console.error(
+          "Failed to load climate grid:",
+          err,
         );
+
+        if (!cancelled) {
+          setError(
+            "Unable to load the selected climate layer.",
+          );
+          setGrid(null);
+        }
       } finally {
-        setLoadingGrid(false);
+        if (!cancelled) {
+          setLoadingGrid(false);
+        }
       }
     }
 
     loadGrid();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVariable]);
+
+  /* ====================================================
+     Map Location Selection
+  ==================================================== */
 
   async function handleLocationSelect(
     latitude: number,
@@ -82,22 +124,27 @@ export default function Home() {
       setLoadingLocation(true);
       setError(null);
 
-      const [metricsData, timeSeriesData] =
-        await Promise.all([
-          getClimateMetrics(
-            latitude,
-            longitude,
-          ),
-          getClimateTimeSeries(
-            latitude,
-            longitude,
-          ),
-        ]);
+      const [
+        metricsData,
+        timeSeriesData,
+      ] = await Promise.all([
+        getClimateMetrics(
+          latitude,
+          longitude,
+        ),
+        getClimateTimeSeries(
+          latitude,
+          longitude,
+        ),
+      ]);
 
       setMetrics(metricsData);
       setTimeSeries(timeSeriesData);
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Failed to retrieve climate information:",
+        err,
+      );
 
       setError(
         "Unable to retrieve climate information for this location.",
@@ -107,9 +154,15 @@ export default function Home() {
     }
   }
 
+  /* ====================================================
+     Render
+  ==================================================== */
+
   return (
     <main className="min-h-screen bg-[#050816] text-white">
-      {/* Header */}
+      {/* ==================================================
+         Header
+      ================================================== */}
 
       <header className="border-b border-white/10 bg-black/30 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1800px] items-center justify-between px-6 py-4">
@@ -134,33 +187,100 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main */}
+      {/* ==================================================
+         Main Layout
+      ================================================== */}
 
       <div className="mx-auto grid max-w-[1800px] gap-5 p-5 lg:grid-cols-[1fr_390px]">
-        {/* Map */}
+        {/* =================================================
+           Map
+        ================================================= */}
 
         <section className="relative min-h-[650px] overflow-hidden rounded-3xl border border-white/10 bg-slate-950 shadow-2xl">
+          {/* Variable Selector */}
+
+          <div className="absolute left-5 top-5 z-[1001]">
+            <div className="rounded-2xl border border-white/10 bg-black/80 p-3 shadow-2xl backdrop-blur-xl">
+              <label
+                htmlFor="climate-variable"
+                className="mb-2 block text-[10px] uppercase tracking-[0.2em] text-cyan-400"
+              >
+                Climate Variable
+              </label>
+
+              <select
+                id="climate-variable"
+                value={selectedVariable}
+                onChange={(event) =>
+                  setSelectedVariable(
+                    event.target
+                      .value as ClimateVariable,
+                  )
+                }
+                className="min-w-[250px] cursor-pointer rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-400/50"
+              >
+                <option value="temperature_2m">
+                  Temperature at 2m
+                </option>
+
+                <option value="surface_pressure">
+                  Surface Pressure
+                </option>
+
+                <option value="wind_speed">
+                  Wind Speed at 10m
+                </option>
+
+                <option value="wind_u_10m">
+                  Wind U Component
+                </option>
+
+                <option value="wind_v_10m">
+                  Wind V Component
+                </option>
+
+                <option value="boundary_layer_height">
+                  Boundary Layer Height
+                </option>
+              </select>
+            </div>
+          </div>
+
+          {/* Loading Indicator */}
+
           {loadingGrid && (
-            <div className="absolute left-5 top-5 z-[1000] rounded-xl border border-white/10 bg-black/70 px-4 py-3 text-sm text-slate-300 backdrop-blur-xl">
-              Loading climate grid...
+            <div className="absolute left-5 right-5 top-24 z-[1000] rounded-xl border border-cyan-400/20 bg-black/75 px-4 py-3 text-sm text-cyan-200 backdrop-blur-xl">
+              Loading{" "}
+              {selectedVariable.replaceAll(
+                "_",
+                " ",
+              )}
+              ...
             </div>
           )}
 
+          {/* Error */}
+
           {error && (
-            <div className="absolute left-5 right-5 top-5 z-[1000] rounded-xl border border-red-400/20 bg-red-950/80 px-4 py-3 text-sm text-red-200 backdrop-blur-xl">
+            <div className="absolute left-5 right-5 top-5 z-[1000] rounded-xl border border-red-400/20 bg-red-950/85 px-4 py-3 text-sm text-red-200 backdrop-blur-xl">
               {error}
             </div>
           )}
 
+          {/* Climate Map */}
+
           <ClimateMap
-            features={grid}
+            data={grid}
+            variable={selectedVariable}
             onLocationSelect={
               handleLocationSelect
             }
           />
         </section>
 
-        {/* Sidebar */}
+        {/* =================================================
+           Sidebar
+        ================================================= */}
 
         <aside className="space-y-5">
           <ClimatePanel
